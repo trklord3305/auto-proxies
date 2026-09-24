@@ -23,13 +23,11 @@ jobs:
         run: |
           python -c "
           import urllib.request
-
           sources = [
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/https.txt',
               'https://api.proxyscrape.com/v4/free-proxy-list/get?proxy_format=text&format=text'
           ]
-
           proxies = set()
           for src in sources:
               try:
@@ -40,14 +38,12 @@ jobs:
                           cleaned = line.strip()
                           if cleaned and ':' in cleaned:
                               proxies.add(cleaned)
-                  except Exception as e:
-                      print(f'Error fetching from {src}: {e}')
-
+                except Exception as e:
+                    print(f'Error fetching: {e}')
           with open('active_proxies.txt', 'w') as f:
               for p in list(proxies):
                   f.write(f'{p}\n')
-
-          print(f'Total active proxies saved: {len(proxies)}')
+          print(f'Total saved: {len(proxies)}')
           "
 
       - name: Commit and push changes
@@ -55,5 +51,5 @@ jobs:
           git config --global user.name 'GitHub Action Bot'
           git config --global user.email 'action@github.com'
           git add active_proxies.txt
-          git commit -m "Auto-update proxies every 5 minutes" || exit 0
+          git commit -m "Auto-update proxies" || exit 0
           git push
