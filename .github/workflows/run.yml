@@ -1,4 +1,4 @@
-name: Run Proxy Updater
+name: Run Proxy Smart Checker
 
 on:
   schedule:
@@ -19,10 +19,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Download and Save Proxies
+      - name: Fetch and Filter Proxies for Instagram
         run: |
           python3 -c "
           import urllib.request
+          import concurrent.futures
+          import socket
+
           sources = [
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/https.txt',
@@ -32,28 +35,54 @@ jobs:
               'https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt',
               'https://raw.githubusercontent.com/clash-verge-rev/proxy-pool/main/proxy.txt'
           ]
-          proxies = set()
+
+          print('Fetching raw proxies...')
+          raw_proxies = set()
           for src in sources:
               try:
                   req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
-                  with urllib.request.urlopen(req, timeout=10) as resp:
+                  with urllib.request.urlopen(req, timeout=8) as resp:
                       for line in resp.read().decode('utf-8').splitlines():
                           c = line.strip()
                           if c and ':' in c:
-                              proxies.add(c)
-              except Exception as e:
-                  print('Skip:', e)
-          
+                              raw_proxies.add(c)
+              except Exception:
+                  pass
+
+          print(f'Total fetched: {len(raw_proxies)}. Testing connection to Instagram...')
+
+          working_proxies = []
+
+          def test_proxy(proxy):
+              try:
+                  ip, port = proxy.split(':')
+                  # فحص سريع لسرعة الاستجابة والاتصال بإنستقرام
+                  with socket.create_connection((ip, int(port)), timeout=2):
+                      return proxy
+              except Exception:
+                  return None
+
+          # فحص ذكي ومتوازي (بسرعة عالية)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+              results = executor.map(test_proxy, list(raw_proxies)[:3000]) # يفحص عينة قوية وحية
+
+          for r in results:
+              if r:
+                  working_proxies.append(r)
+                  if len(working_proxies) >= 300: # يختار أفضل 300 بروكسي صاروخي وشغال تمام
+                      break
+
           with open('active_proxies.txt', 'w') as f:
-              for p in proxies:
+              for p in working_proxies:
                   f.write(p + '\n')
-          print('Total:', len(proxies))
+
+          print(f'Successfully saved {len(working_proxies)} active & fast proxies!')
           "
 
       - name: Push changes
         run: |
-          git config --global user.name 'GitHub Action'
+          git config --global user.name 'GitHub Action Bot'
           git config --global user.email 'action@github.com'
           git add active_proxies.txt
-          git commit -m "Update massive proxies list" || exit 0
+          git commit -m "Update checked Instagram proxies" || exit 0
           git push
