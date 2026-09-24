@@ -11,16 +11,45 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Run script
-        run: python update.py
-      - name: Commit and push
+
+      - name: Download and Save Proxies
         run: |
-          git config --global user.name 'Bot'
-          git config --global user.email 'bot@bot.com'
+          python3 -c "
+          import urllib.request
+          sources = [
+              'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+              'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/https.txt',
+              'https://api.proxyscrape.com/v4/free-proxy-list/get?proxy_format=text&format=text'
+          ]
+          proxies = set()
+          for src in sources:
+              try:
+                  req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      for line in resp.read().decode('utf-8').splitlines():
+                          c = line.strip()
+                          if c and ':' in c:
+                              proxies.add(c)
+              except Exception as e:
+                  print('Skip:', e)
+          
+          with open('active_proxies.txt', 'w') as f:
+              for p in proxies:
+                  f.write(p + '\n')
+          print('Total:', len(proxies))
+          "
+
+      - name: Push changes
+        run: |
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
           git add active_proxies.txt
-          git commit -m "Update proxies" || exit 0
+          git commit -m "Update proxies list" || exit 0
           git push
