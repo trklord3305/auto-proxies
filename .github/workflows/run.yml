@@ -26,7 +26,11 @@ jobs:
           sources = [
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/https.txt',
-              'https://api.proxyscrape.com/v4/free-proxy-list/get?proxy_format=text&format=text'
+              'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt',
+              'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt',
+              'https://api.proxyscrape.com/v4/free-proxy-list/get?proxy_format=text&format=text',
+              'https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt',
+              'https://raw.githubusercontent.com/clash-verge-rev/proxy-pool/main/proxy.txt'
           ]
           proxies = set()
           for src in sources:
@@ -51,5 +55,5 @@ jobs:
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
           git add active_proxies.txt
-          git commit -m "Update proxies list" || exit 0
+          git commit -m "Update massive proxies list" || exit 0
           git push
