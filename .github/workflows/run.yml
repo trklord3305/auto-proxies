@@ -2,7 +2,7 @@ name: Run Instagram Proxy Updater
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # كل 6 ساعات، وليس كل 10 دقائق
+    - cron: '0 */6 * * *'   # كل 6 ساعات لتجنب حظر جهاز الفحص
   workflow_dispatch:
 
 concurrency:
@@ -15,52 +15,74 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install deps
         run: pip install aiohttp
 
-      - name: Download, Validate and Save Proxies for Instagram
+      - name: Download, Validate and Save Instagram Proxies
         run: |
           python3 - <<'PY'
           import asyncio, re, urllib.request
           import aiohttp
 
-          # ---------- 1) جمع المصادر ----------
-          # المصادر العامة قد تحتوي على بروكسيات مركز بيانات، لكن الفحص سيفلترها
+          # ---------- 1) المصادر ----------
           sources = [
+              # مصادر مخصصة لإنستغرام (الأعلى جودة)
+              'https://raw.githubusercontent.com/ClearProxy/checked-proxy-list/main/custom/instagram/http.txt',
+              'https://raw.githubusercontent.com/ClearProxy/checked-proxy-list/main/custom/instagram/socks4.txt',
+
+              # مصادر عامة ضخمة (للفحص الذاتي)
+              'https://raw.githubusercontent.com/Mohammedcha/ProxRipper/main/full_proxies/http.txt',
+              'https://raw.githubusercontent.com/Mohammedcha/ProxRipper/main/full_proxies/socks4.txt',
+              'https://raw.githubusercontent.com/Mohammedcha/ProxRipper/main/full_proxies/socks5.txt',
+
+              # Proxifly
+              'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt',
+              'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks4/data.txt',
+              'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt',
+
+              # Monosans (احتياطي)
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/https.txt',
-              # مصدر مخصص لإنستغرام (انظر الشرح أدناه)
-              'https://raw.githubusercontent.com/ClearProxy/checked-proxy-list/main/custom/instagram/http.txt',
           ]
+
           pat = re.compile(r'^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$')
           proxies = set()
+
           for src in sources:
               try:
-                  req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
-                  with urllib.request.urlopen(req, timeout=15) as r:
-                      data = r.read(5 * 1024 * 1024).decode('utf-8', 'ignore')
+                  req = urllib.request.Request(
+                      src,
+                      headers={'User-Agent': 'Mozilla/5.0'}
+                  )
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      data = r.read(20 * 1024 * 1024).decode('utf-8', 'ignore')
                       for line in data.splitlines():
                           c = line.strip()
                           if pat.match(c):
                               proxies.add(c)
+                  print(f'OK: {src} | total now: {len(proxies)}')
               except Exception as e:
                   print('Skip:', src, e)
 
           print(f'Collected: {len(proxies)} proxies')
 
-          # ---------- 2) إعدادات الفحص ----------
-          # ملاحظة: إنستغرام يعيد 200 أو 302 أو حتى 400 لصفحة الهبوط.
-          # الأهم هو ألا يعيد 403 (محظور) أو 429 (طلبات كثيرة جدًا).
+          # ---------- 2) الإعدادات ----------
           TEST_URL = 'https://www.instagram.com/'
-          TIMEOUT = 8
-          CONCURRENCY = 50  # عدد أقل لتجنب حظر IP جهاز الفحص نفسه
-          MAX_VALID = 100
+          TIMEOUT = 10
+          CONCURRENCY = 500
+          MAX_VALID = 300   # توقف بعد جمع هذا العدد (عدّله كما تريد)
+
+          # أكواد مقبولة = الاتصال نجح ولم يُحظر
+          ACCEPTED = {200, 301, 302, 400}
+          REJECTED = {403, 429}
 
           # ---------- 3) التحقق ----------
           async def main():
@@ -74,18 +96,35 @@ jobs:
                               TEST_URL,
                               proxy=f'http://{proxy}',
                               timeout=aiohttp.ClientTimeout(total=TIMEOUT),
-                              allow_redirects=False,  # لا نتبع التحويلات
+                              allow_redirects=False,
                           ) as resp:
-                              # البروكسي صالح إذا لم يعيد حظرًا صريحًا
-                              if resp.status not in (403, 429):
-                                  await resp.read()
+                              status = resp.status
+                              # نتجاهل جسم الاستجابة لتصفية أسرع
+                              if status in REJECTED:
+                                  return None
+                              if status in ACCEPTED or status < 500:
                                   return proxy
+                              return None
                       except Exception:
                           return None
 
-              connector = aiohttp.TCPConnector(limit=CONCURRENCY, ssl=False)
+              connector = aiohttp.TCPConnector(
+                  limit=CONCURRENCY,
+                  limit_per_host=0,
+                  ssl=False,
+                  ttl_dns_cache=300,
+              )
+              headers = {
+                  'User-Agent': (
+                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                      'AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/122.0.0.0 Safari/537.36'
+                  ),
+                  'Accept-Language': 'en-US,en;q=0.9',
+              }
+
               async with aiohttp.ClientSession(
-                  headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+                  headers=headers,
                   connector=connector,
               ) as session:
                   tasks = [asyncio.create_task(check(session, p)) for p in proxies]
@@ -93,7 +132,8 @@ jobs:
 
                   while pending and len(valid) < MAX_VALID:
                       done, pending = await asyncio.wait(
-                          pending, return_when=asyncio.FIRST_COMPLETED
+                          pending,
+                          return_when=asyncio.FIRST_COMPLETED,
                       )
                       for t in done:
                           try:
@@ -103,6 +143,7 @@ jobs:
                           except Exception:
                               pass
 
+                  # إلغاء المهام المتبقية بشكل نظيف
                   for t in pending:
                       t.cancel()
                   await asyncio.gather(*pending, return_exceptions=True)
@@ -114,7 +155,8 @@ jobs:
 
           # ---------- 4) الحفظ ----------
           with open('instagram_proxies.txt', 'w') as f:
-              f.write('\n'.join(sorted(valid)) + '\n')
+              f.write('\n'.join(sorted(valid)) + ('\n' if valid else ''))
+
           PY
 
       - name: Push changes
