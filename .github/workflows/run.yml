@@ -1,12 +1,12 @@
-name: Run Proxy Updater
+name: Run Instagram Proxy Updater
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '0 */6 * * *'  # كل 6 ساعات، وليس كل 10 دقائق
   workflow_dispatch:
 
 concurrency:
-  group: proxy-updater
+  group: instagram-proxy-updater
   cancel-in-progress: false
 
 jobs:
@@ -24,17 +24,19 @@ jobs:
       - name: Install deps
         run: pip install aiohttp
 
-      - name: Download, Validate and Save Proxies
+      - name: Download, Validate and Save Proxies for Instagram
         run: |
           python3 - <<'PY'
           import asyncio, re, urllib.request
           import aiohttp
 
           # ---------- 1) جمع المصادر ----------
+          # المصادر العامة قد تحتوي على بروكسيات مركز بيانات، لكن الفحص سيفلترها
           sources = [
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/https.txt',
-              'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
+              # مصدر مخصص لإنستغرام (انظر الشرح أدناه)
+              'https://raw.githubusercontent.com/ClearProxy/checked-proxy-list/main/custom/instagram/http.txt',
           ]
           pat = re.compile(r'^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$')
           proxies = set()
@@ -52,15 +54,17 @@ jobs:
 
           print(f'Collected: {len(proxies)} proxies')
 
-          # ---------- 2) الإعدادات ----------
-          TEST_URL = 'http://httpbin.org/ip'
+          # ---------- 2) إعدادات الفحص ----------
+          # ملاحظة: إنستغرام يعيد 200 أو 302 أو حتى 400 لصفحة الهبوط.
+          # الأهم هو ألا يعيد 403 (محظور) أو 429 (طلبات كثيرة جدًا).
+          TEST_URL = 'https://www.instagram.com/'
           TIMEOUT = 8
-          CONCURRENCY = 200
-          MAX_VALID = 500
+          CONCURRENCY = 50  # عدد أقل لتجنب حظر IP جهاز الفحص نفسه
+          MAX_VALID = 100
 
           # ---------- 3) التحقق ----------
           async def main():
-              sem = asyncio.Semaphore(CONCURRENCY)  # ← داخل الـ loop
+              sem = asyncio.Semaphore(CONCURRENCY)
               valid = []
 
               async def check(session, proxy):
@@ -70,8 +74,10 @@ jobs:
                               TEST_URL,
                               proxy=f'http://{proxy}',
                               timeout=aiohttp.ClientTimeout(total=TIMEOUT),
+                              allow_redirects=False,  # لا نتبع التحويلات
                           ) as resp:
-                              if resp.status == 200:
+                              # البروكسي صالح إذا لم يعيد حظرًا صريحًا
+                              if resp.status not in (403, 429):
                                   await resp.read()
                                   return proxy
                       except Exception:
@@ -79,7 +85,7 @@ jobs:
 
               connector = aiohttp.TCPConnector(limit=CONCURRENCY, ssl=False)
               async with aiohttp.ClientSession(
-                  headers={'User-Agent': 'Mozilla/5.0'},
+                  headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
                   connector=connector,
               ) as session:
                   tasks = [asyncio.create_task(check(session, p)) for p in proxies]
@@ -97,7 +103,6 @@ jobs:
                           except Exception:
                               pass
 
-                  # ← إلغاء المهام المتبقية بشكل نظيف
                   for t in pending:
                       t.cancel()
                   await asyncio.gather(*pending, return_exceptions=True)
@@ -105,10 +110,10 @@ jobs:
               return valid
 
           valid = asyncio.run(main())
-          print(f'Valid: {len(valid)}')
+          print(f'Valid for Instagram: {len(valid)}')
 
           # ---------- 4) الحفظ ----------
-          with open('active_proxies.txt', 'w') as f:
+          with open('instagram_proxies.txt', 'w') as f:
               f.write('\n'.join(sorted(valid)) + '\n')
           PY
 
@@ -117,6 +122,6 @@ jobs:
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
           git pull --rebase origin ${{ github.ref_name }} || true
-          git add active_proxies.txt
-          git commit -m "Auto-update proxies: $(date -u)" || echo "No changes"
+          git add instagram_proxies.txt
+          git commit -m "Auto-update Instagram proxies: $(date -u)" || echo "No changes"
           git push
